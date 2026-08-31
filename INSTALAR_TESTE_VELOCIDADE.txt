@@ -1,0 +1,10 @@
+RTI SEGURANÇA - TESTE DE VELOCIDADE
+
+Antes de usar pela primeira vez, com internet ativa, abra o Prompt de Comando e execute:
+
+pip install speedtest-cli
+
+Depois execute:
+python agente_rede.py
+
+Deixe a janela aberta enquanto usa Scanner de Rede ou Teste de Velocidade no site.
