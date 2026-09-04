@@ -37,6 +37,8 @@ body.printing-budget #budgetCard,body.printing-budget .item-row,body.printing-bu
 
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -59,7 +61,7 @@ body.printing-budget #budgetCard,body.printing-budget .item-row,body.printing-bu
 <div class="section-title" style="margin-top:18px"><h2>Itens</h2><button class="btn ghost" onclick="addItem()">＋ Item manual</button></div><div class="item-picker"><select id="catalogPicker"><option value="">Selecionar produto/serviço cadastrado…</option></select><button class="btn green" onclick="addCatalogItem()">＋ Usar</button></div><div id="items" class="items"></div>
 <div class="form-grid" style="margin-top:14px"><div class="field"><label>Mão de obra (R$)</label><input id="labor" type="number" step="0.01" min="0" value="0" oninput="calc()"></div><div class="field"><label>Desconto (R$)</label><input id="discount" type="number" step="0.01" min="0" value="0" oninput="calc()"></div><div class="field wide"><label>Descrição / Observações</label><textarea id="notes" placeholder="Prazo, garantia e outras informações do orçamento..."></textarea></div></div>
 <div class="totals"><div class="line-total"><span>Produtos/serviços</span><b id="subtotal">R$ 0,00</b></div><div class="line-total"><span>Mão de obra</span><b id="laborOut">R$ 0,00</b></div><div class="line-total"><span>Desconto</span><b id="discountOut">- R$ 0,00</b></div><div class="line-total grand"><span>TOTAL</span><span id="total">R$ 0,00</span></div></div>
-<div class="payment-footer"><strong>Informações de pagamento</strong><div>RODRIGO ARAUJO SANTOS – 42.019.355.0001/72</div><div>CORA — 0001 — 2401606-0</div><div>Chave Pix CNPJ: 42.019.355.0001/72</div><div class="validity-fixed"><strong>Validade</strong><br>Orçamento válido por 15 dias. Valores sujeitos a alteração após esse prazo.</div></div><div class="budget-actions"><button class="btn primary" onclick="saveBudget()">💾 Salvar orçamento</button><button class="btn green" onclick="printBudget()">📄 Gerar PDF / Imprimir</button><button class="btn ghost" onclick="shareWhatsApp()">💬 Enviar no WhatsApp</button></div>
+<div class="payment-footer"><strong>Informações de pagamento</strong><div>RODRIGO ARAUJO SANTOS – 42.019.355.0001/72</div><div>CORA — 0001 — 2401606-0</div><div>Chave Pix CNPJ: 42.019.355.0001/72</div><div class="validity-fixed"><strong>Validade</strong><br>Orçamento válido por 15 dias. Valores sujeitos a alteração após esse prazo.</div></div><div class="budget-actions"><button class="btn primary" onclick="saveBudget()">💾 Salvar orçamento</button><button class="btn green" onclick="printBudget()">📄 Gerar PDF / Imprimir</button><button class="btn ghost" onclick="shareWhatsApp()">💬 Enviar PDF no WhatsApp</button></div>
 </section>
 </div>
 
@@ -214,7 +216,7 @@ function confirmApproval(){
   }
 }
 function cancelApproval(id){let b=budgets.find(x=>x.id===id);if(!b)return;if(!confirm('Cancelar a aprovação? As entradas lançadas por este orçamento também serão removidas do caixa.'))return;entries=entries.filter(e=>String(e.budgetId||'')!==String(id));budgets=budgets.map(x=>x.id===id?{...x,status:'pendente',approvedAt:null,updatedAt:new Date().toISOString()}:x);persistBudgetCash();toast('Aprovação cancelada e lançamentos removidos do caixa.')}
-function renderSavedBudgets(){let q=(document.getElementById('budgetSearch')?.value||'').trim().toLowerCase();let list=budgets.filter(b=>{let d=new Date(b.date).toLocaleDateString('pt-BR'),st=(b.status||'pendente');return !q||[b.client,b.company,b.phone,d,st].some(v=>(v||'').toString().toLowerCase().includes(q))});let c=document.getElementById('savedCount');if(c)c.textContent=budgets.length+' salvo(s)';let historyEl=document.getElementById('history');if(!historyEl)return;historyEl.innerHTML=list.length?list.map(b=>{let approved=(b.status||'pendente')==='aprovado',received=budgetReceived(b.id),balance=Math.max(0,(Number(b.total)||0)-received);return `<div class="history-item"><div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><b>${escHtml(b.client)}</b><span style="padding:3px 8px;border-radius:999px;background:${approved?'#12361a':'#30290f'};color:${approved?'#7df079':'#ffd66b'};font-size:11px;font-weight:800">${approved?'✅ APROVADO':'⏳ PENDENTE'}</span></div><span>${new Date(b.date).toLocaleDateString('pt-BR')} • ${(b.items||[]).length} item(ns)${b.company?' • '+escHtml(b.company):''}</span>${approved?`<span style="display:block;margin-top:5px;color:#b9c7cf">Recebido: <b style="color:#65df61">${money(received)}</b> • Saldo: <b>${money(balance)}</b></span>`:''}</div><div style="text-align:right"><div class="price">${money(b.total)}</div><div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-top:6px">${approved?`${balance>.009?`<button class="btn green" style="padding:7px 9px" onclick="openApproval(${b.id},'payment')">💰 Entrada</button>`:''}<button class="btn ghost" style="padding:7px 9px;color:#ffb16d" onclick="cancelApproval(${b.id})">Cancelar aprovação</button>`:`<button class="btn green" style="padding:7px 9px" onclick="openApproval(${b.id},'approve')">✅ Aprovar</button>`}<button class="btn primary" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'edit')">✏️ Editar</button><button class="btn ghost" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'print')">📄 PDF</button><button class="btn ghost" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'whatsapp')">💬 WhatsApp</button>${approved?'':`<button class="btn ghost" style="padding:7px 9px;color:#ff8585" onclick="delBudget(${b.id})">Excluir</button>`}</div></div></div>`}).join(''):`<span style="color:var(--muted)">${budgets.length?'Nenhum orçamento encontrado na busca.':'Nenhum orçamento salvo ainda.'}</span>`}
+function renderSavedBudgets(){let q=(document.getElementById('budgetSearch')?.value||'').trim().toLowerCase();let list=budgets.filter(b=>{let d=new Date(b.date).toLocaleDateString('pt-BR'),st=(b.status||'pendente');return !q||[b.client,b.company,b.phone,d,st].some(v=>(v||'').toString().toLowerCase().includes(q))});let c=document.getElementById('savedCount');if(c)c.textContent=budgets.length+' salvo(s)';let historyEl=document.getElementById('history');if(!historyEl)return;historyEl.innerHTML=list.length?list.map(b=>{let approved=(b.status||'pendente')==='aprovado',received=budgetReceived(b.id),balance=Math.max(0,(Number(b.total)||0)-received);return `<div class="history-item"><div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><b>${escHtml(b.client)}</b><span style="padding:3px 8px;border-radius:999px;background:${approved?'#12361a':'#30290f'};color:${approved?'#7df079':'#ffd66b'};font-size:11px;font-weight:800">${approved?'✅ APROVADO':'⏳ PENDENTE'}</span></div><span>${new Date(b.date).toLocaleDateString('pt-BR')} • ${(b.items||[]).length} item(ns)${b.company?' • '+escHtml(b.company):''}</span>${approved?`<span style="display:block;margin-top:5px;color:#b9c7cf">Recebido: <b style="color:#65df61">${money(received)}</b> • Saldo: <b>${money(balance)}</b></span>`:''}</div><div style="text-align:right"><div class="price">${money(b.total)}</div><div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-top:6px">${approved?`${balance>.009?`<button class="btn green" style="padding:7px 9px" onclick="openApproval(${b.id},'payment')">💰 Entrada</button>`:''}<button class="btn ghost" style="padding:7px 9px;color:#ffb16d" onclick="cancelApproval(${b.id})">Cancelar aprovação</button>`:`<button class="btn green" style="padding:7px 9px" onclick="openApproval(${b.id},'approve')">✅ Aprovar</button>`}<button class="btn primary" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'edit')">✏️ Editar</button><button class="btn ghost" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'print')">📄 PDF</button><button class="btn ghost" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'whatsapp')">💬 PDF WhatsApp</button>${approved?'':`<button class="btn ghost" style="padding:7px 9px;color:#ff8585" onclick="delBudget(${b.id})">Excluir</button>`}</div></div></div>`}).join(''):`<span style="color:var(--muted)">${budgets.length?'Nenhum orçamento encontrado na busca.':'Nenhum orçamento salvo ainda.'}</span>`}
 function escHtml(v){return String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]))}
 function printBudget(){
   const its=getItems();
@@ -240,7 +242,56 @@ function printBudget(){
   <div class="thanks">Obrigado pela preferência.</div></div><div class="no-print"><button onclick="window.print()">Imprimir / Salvar em PDF</button></div></body></html>`;
   const w=window.open('','_blank'); if(!w) return toast('Permita pop-ups para gerar o PDF.'); w.document.open();w.document.write(html);w.document.close();setTimeout(()=>w.print(),500);
 }
-function shareWhatsApp(){let its=getItems();let msg=`*RTI SEGURANÇA - ORÇAMENTO*\nCliente: ${client.value||'-'}\n\n${its.map(x=>`${x.qty}x ${x.description} — ${money(x.qty*x.value)}`).join('\n')}\n\n*TOTAL: ${total.textContent}*`;window.open('https://wa.me/?text='+encodeURIComponent(msg),'_blank')}
+function safePdfName(v){return String(v||'Cliente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'').slice(0,55)||'Cliente'}
+async function logoDataUrl(){try{const r=await fetch('logo-rti.png',{cache:'force-cache'});const b=await r.blob();return await new Promise((ok,err)=>{const fr=new FileReader();fr.onload=()=>ok(fr.result);fr.onerror=err;fr.readAsDataURL(b)})}catch(e){return null}}
+async function buildBudgetPdf(){
+  const its=getItems();
+  if(!client.value.trim())throw new Error('Informe o nome do cliente.');
+  if(!its.length)throw new Error('Adicione pelo menos um item.');
+  if(!window.jspdf?.jsPDF)throw new Error('Gerador de PDF não carregou. Atualize a página e tente novamente.');
+  const {jsPDF}=window.jspdf,doc=new jsPDF({unit:'mm',format:'a4'}),W=210,M=14;
+  const sub=its.reduce((a,x)=>a+(x.qty*x.value),0),lab=+labor.value||0,disc=+discount.value||0,grand=Math.max(0,sub+lab-disc);
+  const today=new Date().toLocaleDateString('pt-BR');
+  const number=editing?String(budgets.findIndex(x=>x.id===editing)>=0?budgets.length-budgets.findIndex(x=>x.id===editing):budgets.length+1).padStart(4,'0'):String(budgets.length+1).padStart(4,'0');
+  const logo=await logoDataUrl();
+  if(logo){try{doc.addImage(logo,'PNG',M,9,26,18,undefined,'FAST')}catch(e){}}
+  doc.setFont('helvetica','bold');doc.setFontSize(17);doc.setTextColor(8,113,207);doc.text('RTI SEGURANÇA',45,16);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(45,45,45);doc.text('RODRIGO ARAUJO SANTOS — CNPJ 42.019.355.0001/72',45,21);doc.text('Contato: (75) 98192-7218',45,25);
+  doc.setDrawColor(8,123,232);doc.setLineWidth(1.2);doc.line(M,31,W-M,31);
+  doc.setTextColor(20,20,20);doc.setFont('helvetica','bold');doc.setFontSize(15);doc.text('ORÇAMENTO',M,40);
+  doc.setFontSize(9);doc.text(`Nº ${number}`,W-M,37,{align:'right'});doc.setFont('helvetica','normal');doc.text(`Data: ${today}`,W-M,41,{align:'right'});
+  doc.setFillColor(248,251,253);doc.setDrawColor(205,215,222);doc.roundedRect(M,46,W-(M*2),25,2,2,'FD');
+  doc.setFontSize(8);doc.setTextColor(105,105,105);doc.text('CLIENTE',M+4,52);doc.text('TELEFONE',112,52);doc.text('EMPRESA',M+4,63);
+  doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(20,20,20);doc.text(client.value||'—',M+4,57,{maxWidth:88});doc.text(phone.value||'—',112,57,{maxWidth:80});doc.text(company.value||'—',M+4,68,{maxWidth:180});
+  const body=its.map(x=>[x.description,String(x.qty),'un',money(x.value),money(x.qty*x.value)]);
+  doc.autoTable({startY:77,margin:{left:M,right:M},head:[['Descrição','Qtd','Un.','Valor unitário','Valor total']],body,theme:'grid',styles:{font:'helvetica',fontSize:8,cellPadding:2.3,lineColor:[220,225,229],lineWidth:.2},headStyles:{fillColor:[8,123,232],textColor:255,fontStyle:'bold'},columnStyles:{1:{halign:'center',cellWidth:15},2:{halign:'center',cellWidth:14},3:{halign:'right',cellWidth:31},4:{halign:'right',cellWidth:31}}});
+  let y=(doc.lastAutoTable?.finalY||85)+7;
+  const tx=W-M,lv=146;
+  doc.setFontSize(9);doc.setTextColor(50,50,50);doc.setFont('helvetica','normal');doc.text('Produtos/serviços',lv,y);doc.text(money(sub),tx,y,{align:'right'});y+=5;doc.text('Mão de obra',lv,y);doc.text(money(lab),tx,y,{align:'right'});y+=5;doc.text('Desconto',lv,y);doc.text('- '+money(disc),tx,y,{align:'right'});y+=7;doc.setDrawColor(79,207,61);doc.setLineWidth(.8);doc.line(lv,y-3,tx,y-3);doc.setFont('helvetica','bold');doc.setFontSize(14);doc.setTextColor(7,95,174);doc.text('TOTAL',lv,y+2);doc.text(money(grand),tx,y+2,{align:'right'});y+=11;
+  if(notes.value.trim()){doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(25,25,25);doc.text('Observações',M,y);y+=5;doc.setFont('helvetica','normal');doc.setFontSize(8.5);const lines=doc.splitTextToSize(notes.value.trim(),W-(M*2));doc.text(lines,M,y);y+=lines.length*4+3}
+  if(y>245){doc.addPage();y=18}
+  doc.setFillColor(247,251,254);doc.setDrawColor(207,224,236);doc.roundedRect(M,y,W-(M*2),31,2,2,'FD');doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(20,20,20);doc.text('INFORMAÇÕES DE PAGAMENTO',M+4,y+6);doc.setFont('helvetica','normal');doc.setFontSize(8);doc.text('RODRIGO ARAUJO SANTOS – 42.019.355.0001/72',M+4,y+12);doc.text('CORA — 0001 — 2401606-0',M+4,y+17);doc.setFont('helvetica','bold');doc.text('Chave Pix CNPJ: 42.019.355.0001/72',M+4,y+22);doc.setFont('helvetica','normal');doc.text('Validade: 15 dias. Valores sujeitos a alteração após esse prazo.',M+4,y+28);
+  doc.setFontSize(8);doc.setTextColor(90,90,90);doc.text('Obrigado pela preferência.',W/2,290,{align:'center'});
+  return doc;
+}
+async function shareWhatsApp(){
+  try{
+    toast('Gerando PDF do orçamento…');
+    const doc=await buildBudgetPdf();
+    const blob=doc.output('blob');
+    const filename=`Orcamento_RTI_${safePdfName(client.value)}_${localDateStr()}.pdf`;
+    const file=new File([blob],filename,{type:'application/pdf'});
+    const shareData={files:[file],title:'Orçamento RTI Segurança',text:`Segue orçamento em PDF para ${client.value||'cliente'}.`};
+    if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[file]}))){
+      await navigator.share(shareData);
+      toast('PDF pronto para enviar pelo WhatsApp.');
+      return;
+    }
+    doc.save(filename);
+    window.open('https://wa.me/?text='+encodeURIComponent('Olá! Segue o orçamento RTI Segurança em PDF. O arquivo foi baixado para você anexar nesta conversa.'),'_blank');
+    toast('PDF baixado. No WhatsApp, anexe o arquivo que acabou de baixar.');
+  }catch(e){if(e?.name==='AbortError')return;toast(e?.message||'Não foi possível gerar o PDF.')}
+}
 function openClients(){clientModal.style.display='flex'}function closeClients(){clientModal.style.display='none'}
 function saveClient(){if(!cName.value.trim())return toast('Informe o nome do cliente.');clients.unshift({id:Date.now(),name:cName.value.trim(),company:cCompany.value,phone:cPhone.value,email:cEmail.value,address:cAddress.value,notes:cNotes.value});localStorage.setItem('rti_clients',JSON.stringify(clients));queueCloudSync();['cName','cCompany','cPhone','cEmail','cAddress','cNotes'].forEach(id=>document.getElementById(id).value='');closeClients();render();toast('Cliente cadastrado.')}
 function chooseClient(id){let c=clients.find(x=>x.id===id);if(!c)return;showModule('budget');client.value=c.name;phone.value=c.phone||'';company.value=c.company||'';budgetCard.scrollIntoView({behavior:'smooth'})}
