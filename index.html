@@ -101,6 +101,7 @@ const SUPABASE_KEY='sb_publishable_uTPM_QIEMNkJoauLS9Ic6A_PoEJUNfV';
 const ALLOWED_EMAIL='rodrigo-araujo14@hotmail.com';
 const cloud=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
 let cloudUser=null,cloudReady=false,cloudSaving=false,cloudTimer=null,applyingCloud=false;
+let passwordRecoveryMode=/(?:[?#&])type=recovery(?:&|$)/.test(location.href);
 function setSyncUI(text,ok=false){let p=document.getElementById('syncPill'),st=document.getElementById('syncStatus');if(p){p.textContent=text;p.style.color=ok?'#bfffb9':'#b9e0ff'}if(st)st.textContent=text;let lo=document.getElementById('logoutBtn');if(lo)lo.style.display=cloudUser?'block':'none'}
 function openSyncModal(){document.getElementById('syncModal').style.display='flex'}
 function closeSyncModal(){document.getElementById('syncModal').style.display='none'}
@@ -141,11 +142,12 @@ async function applySession(session){
   let user=session?.user||null;
   if(!user){cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem');return}
   if((user.email||'').toLowerCase()!==ALLOWED_EMAIL){await cloud.auth.signOut();cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('⛔ E-mail não autorizado');return}
-  cloudUser=user;document.body.classList.add('authenticated');setSyncUI('☁️ Login confirmado',true);await loadCloudState();closeSyncModal();
+  cloudUser=user;if(passwordRecoveryMode){showPasswordSetup();return}document.body.classList.add('authenticated');setSyncUI('☁️ Login confirmado',true);await loadCloudState();closeSyncModal();
 }
 async function initCloud(){
+  cloud.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'){passwordRecoveryMode=true;setTimeout(showPasswordSetup,0);return}if(event==='SIGNED_IN'&&session?.user?.id!==cloudUser?.id)setTimeout(()=>applySession(session),0);if(event==='SIGNED_OUT'){cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem')}});
   const {data}=await cloud.auth.getSession();await applySession(data.session);
-  cloud.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_IN'&&session?.user?.id!==cloudUser?.id)setTimeout(()=>applySession(session),0);if(event==='SIGNED_OUT'){cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem')}if(event==='PASSWORD_RECOVERY')setTimeout(showPasswordSetup,0)});
+  if(passwordRecoveryMode)showPasswordSetup();
 }
 async function sendMagicLink(){
   let st=document.getElementById('syncStatus');st.textContent='Enviando link para seu e-mail…';
@@ -167,8 +169,8 @@ async function requestPasswordReset(){
   loginMsg('Falha de conexão com o Supabase. Verifique a internet e se o projeto Supabase está ativo. Se persistir, abra F12 > Console para diagnosticar.');
  }
 }
-function showPasswordSetup(){document.body.classList.remove('authenticated');document.querySelector('#loginGate h2').textContent='🔐 Definir senha';document.getElementById('loginPassword').value='';const b=document.getElementById('loginButton');b.textContent='Salvar senha';b.onclick=saveNewPassword;loginMsg('Crie uma senha com pelo menos 6 caracteres.')}
-async function saveNewPassword(){const p=document.getElementById('loginPassword').value;if(p.length<6){loginMsg('Use pelo menos 6 caracteres.');return}const {error}=await cloud.auth.updateUser({password:p});if(error){loginMsg('Erro: '+error.message);return}const b=document.getElementById('loginButton');b.textContent='Entrar';b.onclick=loginWithPassword;document.querySelector('#loginGate h2').textContent='🔐 RTI Segurança';document.getElementById('loginPassword').value='';const {data}=await cloud.auth.getSession();await applySession(data.session)}
+function showPasswordSetup(){passwordRecoveryMode=true;document.body.classList.remove('authenticated');document.querySelector('#loginGate h2').textContent='🔐 Definir senha';document.getElementById('loginPassword').value='';const b=document.getElementById('loginButton');b.textContent='Salvar senha';b.onclick=saveNewPassword;loginMsg('Crie uma senha com pelo menos 6 caracteres.')}
+async function saveNewPassword(){const p=document.getElementById('loginPassword').value;if(p.length<6){loginMsg('Use pelo menos 6 caracteres.');return}const {error}=await cloud.auth.updateUser({password:p});if(error){loginMsg('Erro: '+error.message);return}const b=document.getElementById('loginButton');b.textContent='Entrar';b.onclick=loginWithPassword;document.querySelector('#loginGate h2').textContent='🔐 RTI Segurança';document.getElementById('loginPassword').value='';passwordRecoveryMode=false;history.replaceState(null,'',location.pathname);const {data}=await cloud.auth.getSession();await applySession(data.session)}
 async function logoutCloud(){await cloud.auth.signOut();cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem');closeSyncModal()}
 
 let budgets=JSON.parse(localStorage.getItem('rti_budgets')||'[]');let clients=JSON.parse(localStorage.getItem('rti_clients')||'[]');let editing=null;let catalog=JSON.parse(localStorage.getItem('rti_catalog')||'[]');let editingCatalog=null;let entries=JSON.parse(localStorage.getItem('rti_entries')||'[]');
