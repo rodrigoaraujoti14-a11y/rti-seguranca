@@ -40,8 +40,8 @@ body.printing-budget #budgetCard,body.printing-budget .item-row,body.printing-bu
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-</head>
-<body>
+<style>body:not(.authenticated) .app{visibility:hidden}#loginGate{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;background:#05090d}body.authenticated #loginGate{display:none}#loginGate .card-login{max-width:420px;width:100%;background:#13212b;padding:26px;border:1px solid #305066;border-radius:18px}#loginGate input{width:100%;margin:7px 0 15px;padding:12px;background:#081319;color:white;border:1px solid #305066;border-radius:9px}#loginGate button{padding:12px;border:0;border-radius:9px;cursor:pointer}#loginGate .primary-login{width:100%;background:#087be8;color:white}</style></head>
+<body><div id="loginGate"><div class="card-login"><h2>🔐 RTI Segurança</h2><p>Entre com seu e-mail e senha.</p><label>E-mail</label><input value="rodrigo-araujo14@hotmail.com" readonly><label>Senha</label><input type="password" id="loginPassword" placeholder="Sua senha" autocomplete="current-password" onkeydown="if(event.key==='Enter')loginWithPassword()"><button class="primary-login" id="loginButton" onclick="loginWithPassword()">Entrar</button><button style="margin-top:10px;background:transparent;color:#b9e0ff" onclick="requestPasswordReset()">Criar ou recuperar senha</button><p id="loginMessage" role="status"></p></div></div>
 <div class="app">
 <header class="top"><img class="logo" src="logo-rti.png" alt="RTI Sistemas 360"><div class="brand"><b>RTI Segurança</b><span>Sistema de Orçamentos</span></div><div class="pill" id="syncPill" onclick="openSyncModal()" style="cursor:pointer">☁️ Conectar à nuvem</div></header>
 <main class="page">
@@ -139,13 +139,13 @@ async function loadCloudState(){
 }
 async function applySession(session){
   let user=session?.user||null;
-  if(!user){cloudUser=null;cloudReady=false;setSyncUI('☁️ Conectar à nuvem');return}
-  if((user.email||'').toLowerCase()!==ALLOWED_EMAIL){await cloud.auth.signOut();cloudUser=null;cloudReady=false;setSyncUI('⛔ E-mail não autorizado');openSyncModal();return}
-  cloudUser=user;setSyncUI('☁️ Login confirmado',true);await loadCloudState();closeSyncModal();
+  if(!user){cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem');return}
+  if((user.email||'').toLowerCase()!==ALLOWED_EMAIL){await cloud.auth.signOut();cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('⛔ E-mail não autorizado');return}
+  cloudUser=user;document.body.classList.add('authenticated');setSyncUI('☁️ Login confirmado',true);await loadCloudState();closeSyncModal();
 }
 async function initCloud(){
   const {data}=await cloud.auth.getSession();await applySession(data.session);
-  cloud.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_IN'&&session?.user?.id!==cloudUser?.id)setTimeout(()=>applySession(session),0);if(event==='SIGNED_OUT'){cloudUser=null;cloudReady=false;setSyncUI('☁️ Conectar à nuvem')}});
+  cloud.auth.onAuthStateChange((event,session)=>{if(event==='SIGNED_IN'&&session?.user?.id!==cloudUser?.id)setTimeout(()=>applySession(session),0);if(event==='SIGNED_OUT'){cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem')}if(event==='PASSWORD_RECOVERY')setTimeout(showPasswordSetup,0)});
 }
 async function sendMagicLink(){
   let st=document.getElementById('syncStatus');st.textContent='Enviando link para seu e-mail…';
@@ -154,7 +154,12 @@ async function sendMagicLink(){
   st.textContent='Link enviado. Abra o e-mail e clique no link para entrar.';
 }
 async function syncNow(){if(!cloudUser){openSyncModal();document.getElementById('syncStatus').textContent='Primeiro clique em “Enviar link de acesso” e entre pelo e-mail.';return}await saveCloudState(true)}
-async function logoutCloud(){await cloud.auth.signOut();cloudUser=null;cloudReady=false;setSyncUI('☁️ Conectar à nuvem');openSyncModal()}
+function loginMsg(t){document.getElementById('loginMessage').textContent=t}
+async function loginWithPassword(){let p=document.getElementById('loginPassword').value;if(!p){loginMsg('Digite sua senha.');return}loginMsg('Verificando…');const {error}=await cloud.auth.signInWithPassword({email:ALLOWED_EMAIL,password:p});loginMsg(error?'Senha incorreta ou ainda não cadastrada. Use Criar ou recuperar senha.':'Conectado.')}
+async function requestPasswordReset(){loginMsg('Enviando link para cadastrar senha…');const {error}=await cloud.auth.resetPasswordForEmail(ALLOWED_EMAIL,{redirectTo:location.origin+location.pathname});loginMsg(error?'Erro: '+error.message:'Confira seu e-mail para definir a senha.')}
+function showPasswordSetup(){document.body.classList.remove('authenticated');document.querySelector('#loginGate h2').textContent='🔐 Definir senha';document.getElementById('loginPassword').value='';const b=document.getElementById('loginButton');b.textContent='Salvar senha';b.onclick=saveNewPassword;loginMsg('Crie uma senha com pelo menos 6 caracteres.')}
+async function saveNewPassword(){const p=document.getElementById('loginPassword').value;if(p.length<6){loginMsg('Use pelo menos 6 caracteres.');return}const {error}=await cloud.auth.updateUser({password:p});if(error){loginMsg('Erro: '+error.message);return}const b=document.getElementById('loginButton');b.textContent='Entrar';b.onclick=loginWithPassword;document.querySelector('#loginGate h2').textContent='🔐 RTI Segurança';document.getElementById('loginPassword').value='';const {data}=await cloud.auth.getSession();await applySession(data.session)}
+async function logoutCloud(){await cloud.auth.signOut();cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem');closeSyncModal()}
 
 let budgets=JSON.parse(localStorage.getItem('rti_budgets')||'[]');let clients=JSON.parse(localStorage.getItem('rti_clients')||'[]');let editing=null;let catalog=JSON.parse(localStorage.getItem('rti_catalog')||'[]');let editingCatalog=null;let entries=JSON.parse(localStorage.getItem('rti_entries')||'[]');
 const CLIENTES_PADRAO=["ADAPT Consultoria", "Ademario Bitencourt", "Arena nascimento", "Bar de mole", "Bio Analise", "Cliente.Final", "Colegio Millenium Ribeiro Almeida Empreendimentos Educacionais LTDA", "Colégio lápis de cor", "Dona rasteiras", "Dori cicles", "Dudu auto center", "Escola menino Jesus de Praga", "Farmacia Kelly", "Farmacia morais", "Froggems", "Helder Motos Comercio E Servicos Eireli", "Iago advocacia", "Igreja evangélica assembleia De Deus", "Jp montagens", "Lucas material de construção", "Mazza Engenharia", "Medclin", "Mercado municipal", "Milena", "Millenium Fitness", "Mão de obra serviço", "Outros clientes", "Paula Jamile", "Pedreiras Lage", "Pirata do coentro", "Pizzaria cantina do Pedro", "Realce industria de produtos plásticos Ltda", "Sacolão", "Vitor feira", "Wiliam"];
