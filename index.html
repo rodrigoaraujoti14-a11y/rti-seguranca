@@ -156,7 +156,17 @@ async function sendMagicLink(){
 async function syncNow(){if(!cloudUser){openSyncModal();document.getElementById('syncStatus').textContent='Primeiro clique em “Enviar link de acesso” e entre pelo e-mail.';return}await saveCloudState(true)}
 function loginMsg(t){document.getElementById('loginMessage').textContent=t}
 async function loginWithPassword(){let p=document.getElementById('loginPassword').value;if(!p){loginMsg('Digite sua senha.');return}loginMsg('Verificando…');const {error}=await cloud.auth.signInWithPassword({email:ALLOWED_EMAIL,password:p});loginMsg(error?'Senha incorreta ou ainda não cadastrada. Use Criar ou recuperar senha.':'Conectado.')}
-async function requestPasswordReset(){loginMsg('Enviando link para cadastrar senha…');const {error}=await cloud.auth.resetPasswordForEmail(ALLOWED_EMAIL,{redirectTo:location.origin+location.pathname});loginMsg(error?'Erro: '+error.message:'Confira seu e-mail para definir a senha.')}
+async function requestPasswordReset(){
+ loginMsg('Verificando conexão com o Supabase…');
+ try{
+  const {error}=await cloud.auth.resetPasswordForEmail(ALLOWED_EMAIL,{redirectTo:location.origin+location.pathname});
+  if(error){loginMsg('Não foi possível enviar o e-mail: '+error.message);return}
+  loginMsg('Confira seu e-mail para definir a senha. Veja também o spam.');
+ }catch(e){
+  console.error('Falha de conexão com autenticação:',e);
+  loginMsg('Falha de conexão com o Supabase. Verifique a internet e se o projeto Supabase está ativo. Se persistir, abra F12 > Console para diagnosticar.');
+ }
+}
 function showPasswordSetup(){document.body.classList.remove('authenticated');document.querySelector('#loginGate h2').textContent='🔐 Definir senha';document.getElementById('loginPassword').value='';const b=document.getElementById('loginButton');b.textContent='Salvar senha';b.onclick=saveNewPassword;loginMsg('Crie uma senha com pelo menos 6 caracteres.')}
 async function saveNewPassword(){const p=document.getElementById('loginPassword').value;if(p.length<6){loginMsg('Use pelo menos 6 caracteres.');return}const {error}=await cloud.auth.updateUser({password:p});if(error){loginMsg('Erro: '+error.message);return}const b=document.getElementById('loginButton');b.textContent='Entrar';b.onclick=loginWithPassword;document.querySelector('#loginGate h2').textContent='🔐 RTI Segurança';document.getElementById('loginPassword').value='';const {data}=await cloud.auth.getSession();await applySession(data.session)}
 async function logoutCloud(){await cloud.auth.signOut();cloudUser=null;cloudReady=false;document.body.classList.remove('authenticated');setSyncUI('☁️ Conectar à nuvem');closeSyncModal()}
