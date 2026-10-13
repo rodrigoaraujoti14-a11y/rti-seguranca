@@ -139,7 +139,7 @@ async function loadCloudState(){
 }
 async function applySession(session){
   let user=session?.user||null;
-  if(!user){cloudUser=null;cloudReady=false;setSyncUI('☁️ Conectar à nuvem');setTimeout(()=>openSyncModal(),700);return}
+  if(!user){cloudUser=null;cloudReady=false;setSyncUI('☁️ Conectar à nuvem');return}
   if((user.email||'').toLowerCase()!==ALLOWED_EMAIL){await cloud.auth.signOut();cloudUser=null;cloudReady=false;setSyncUI('⛔ E-mail não autorizado');openSyncModal();return}
   cloudUser=user;setSyncUI('☁️ Login confirmado',true);await loadCloudState();closeSyncModal();
 }
