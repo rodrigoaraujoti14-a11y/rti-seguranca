@@ -105,7 +105,60 @@ let passwordRecoveryMode=/(?:[?#&])type=recovery(?:&|$)/.test(location.href);
 function setSyncUI(text,ok=false){let p=document.getElementById('syncPill'),st=document.getElementById('syncStatus');if(p){p.textContent=text;p.style.color=ok?'#bfffb9':'#b9e0ff'}if(st)st.textContent=text;let lo=document.getElementById('logoutBtn');if(lo)lo.style.display=cloudUser?'block':'none'}
 function openSyncModal(){document.getElementById('syncModal').style.display='flex'}
 function closeSyncModal(){document.getElementById('syncModal').style.display='none'}
-function cloudSnapshot(){return {version:1,budgets,clients,catalog,entries,saved_at:new Date().toISOString()}}
+
+// Integração: somente recebimentos novos, nunca importa histórico sem autorização.
+// O token de acesso vem da sessão Supabase; nenhuma credencial financeira fica no navegador.
+const RTI_FINANCE_URL='https://financeiro.rtisistemas360.com.br/api/integrations/rti-seguranca';
+let financeCancellations=JSON.parse(localStorage.getItem('rti_finance_cancellations')||'[]');
+let financeSyncBusy=false,financeSyncTimer=null;
+function scheduleFinanceSync(){
+  clearTimeout(financeSyncTimer);
+  financeSyncTimer=setTimeout(()=>flushFinanceSync(),1200);
+}
+async function flushFinanceSync(){
+  if(financeSyncBusy||!cloudReady||!cloudUser)return;
+  const canceledIds=new Set(financeCancellations.map(x=>String(x.id)));
+  const payments=entries.filter(e=>e.financeSync&&e.financeId&&!e.financeSyncedAt&&!canceledIds.has(String(e.financeId))).slice(0,30);
+  const cancellations=financeCancellations.filter(e=>!e.financeSyncedAt).slice(0,20);
+  const events=[
+    ...cancellations.map(e=>({action:'canceled',id:String(e.id)})),
+    ...payments.map(e=>({action:'received',id:String(e.financeId),client:e.client||'Cliente',value:Number(e.value)||0,date:e.date,method:e.method||''}))
+  ];
+  if(!events.length)return;
+  financeSyncBusy=true;
+  let done=false;
+  try{
+    const {data,error}=await cloud.auth.getSession();
+    if(error||!data?.session?.access_token)throw Error('Faça login no RTI Segurança para sincronizar.');
+    const answer=await fetch(RTI_FINANCE_URL,{
+      method:'POST',
+      mode:'cors',
+      credentials:'omit',
+      headers:{'content-type':'application/json',authorization:'Bearer '+data.session.access_token},
+      body:JSON.stringify({events})
+    });
+    const result=await answer.json().catch(()=>({}));
+    if(!answer.ok||!result.ok)throw Error(result.error||'Servidor financeiro indisponível.');
+    const now=new Date().toISOString();
+    for(const e of payments)e.financeSyncedAt=now;
+    for(const e of cancellations)e.financeSyncedAt=now;
+    localStorage.setItem('rti_entries',JSON.stringify(entries));
+    localStorage.setItem('rti_finance_cancellations',JSON.stringify(financeCancellations));
+    queueCloudSync();
+    toast('✅ Recebimento sincronizado no RTI Financeiro — Cora.');
+    done=true;
+  }catch(error){
+    console.warn('Sincronização financeira pendente:',error);
+    toast('⚠️ Entrada salva no RTI Segurança, mas a receita na Cora está pendente de sincronização.');
+  }finally{
+    financeSyncBusy=false;
+    if(done&&(
+      entries.some(e=>e.financeSync&&e.financeId&&!e.financeSyncedAt&&!canceledIds.has(String(e.financeId)))||
+      financeCancellations.some(e=>!e.financeSyncedAt)
+    ))scheduleFinanceSync();
+  }
+}
+function cloudSnapshot(){return {version:1,budgets,clients,catalog,entries,financeCancellations,saved_at:new Date().toISOString()}}
 function uniqueMerge(local,remote,keyFn){let m=new Map();for(const x of (local||[]))m.set(keyFn(x),x);for(const x of (remote||[]))m.set(keyFn(x),x);return [...m.values()]}
 function mergeState(remote){
   if(!remote||typeof remote!=='object')return;
@@ -113,11 +166,14 @@ function mergeState(remote){
   budgets=uniqueMerge(budgets,remote.budgets,x=>String(x.id)).sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
   clients=uniqueMerge(clients,remote.clients,x=>`${(x.name||'').trim().toLowerCase()}|${(x.phone||'').trim()}|${(x.company||'').trim().toLowerCase()}`);
   catalog=uniqueMerge(catalog,remote.catalog,x=>String(x.id||`${(x.name||'').toLowerCase()}|${Number(x.price||0).toFixed(2)}`));
-  entries=uniqueMerge(entries,remote.entries,x=>String(x.id)).sort((a,b)=>(String(b.date||'').localeCompare(String(a.date||'')))||((b.id||0)-(a.id||0)));
+  financeCancellations=uniqueMerge(financeCancellations,remote.financeCancellations,x=>String(x.id));
+  const canceledReceipts=new Set(financeCancellations.map(x=>String(x.id)));
+  entries=uniqueMerge(entries,remote.entries,x=>String(x.id)).filter(e=>!e.financeId||!canceledReceipts.has(String(e.financeId))).sort((a,b)=>(String(b.date||'').localeCompare(String(a.date||'')))||((b.id||0)-(a.id||0)));
   localStorage.setItem('rti_budgets',JSON.stringify(budgets));
   localStorage.setItem('rti_clients',JSON.stringify(clients));
   localStorage.setItem('rti_catalog',JSON.stringify(catalog));
   localStorage.setItem('rti_entries',JSON.stringify(entries));
+  localStorage.setItem('rti_finance_cancellations',JSON.stringify(financeCancellations));
   applyingCloud=false;
 }
 function queueCloudSync(){if(!cloudReady||!cloudUser||applyingCloud)return;clearTimeout(cloudTimer);cloudTimer=setTimeout(()=>saveCloudState(false),650)}
@@ -137,6 +193,7 @@ async function loadCloudState(){
   if(data?.state)mergeState(data.state);
   cloudReady=true;render();
   await saveCloudState(false);
+  scheduleFinanceSync();
 }
 async function applySession(session){
   let user=session?.user||null;
@@ -219,7 +276,7 @@ function openApproval(id,mode='approve'){
 }
 function closeApproval(){document.getElementById('approvalModal').style.display='none';approvalBudgetId=null;approvalReceivedTouched=false}
 function updateApprovalTotal(forceReceived=false){let b=budgets.find(x=>x.id===approvalBudgetId);if(!b||approvalMode!=='approve')return;let d=Math.max(0,Number(document.getElementById('approvalDiscount').value)||0),final=Math.max(0,budgetGross(b)-d),received=budgetReceived(b.id),balance=Math.max(0,final-received);document.getElementById('approvalTotal').textContent=money(final);if(forceReceived||!approvalReceivedTouched)document.getElementById('approvalReceived').value=balance.toFixed(2)}
-function persistBudgetCash(){localStorage.setItem('rti_budgets',JSON.stringify(budgets));localStorage.setItem('rti_entries',JSON.stringify(entries));queueCloudSync();render()}
+function persistBudgetCash(){localStorage.setItem('rti_budgets',JSON.stringify(budgets));localStorage.setItem('rti_entries',JSON.stringify(entries));queueCloudSync();scheduleFinanceSync();render()}
 function confirmApproval(){
   let b=budgets.find(x=>x.id===approvalBudgetId);if(!b)return;
   let method=document.getElementById('approvalMethod').value,date=document.getElementById('approvalDate').value||localDateStr(),received=Math.max(0,Number(document.getElementById('approvalReceived').value)||0);
@@ -227,13 +284,13 @@ function confirmApproval(){
     let d=Math.max(0,Number(document.getElementById('approvalDiscount').value)||0),final=Math.max(0,budgetGross(b)-d),already=budgetReceived(b.id),maxNow=Math.max(0,final-already);
     if(received>maxNow+.009)return toast('O valor recebido não pode ser maior que o saldo do orçamento.');
     b={...b,discount:d,total:final,status:'aprovado',approvedAt:new Date().toISOString(),updatedAt:new Date().toISOString()};budgets=budgets.map(x=>x.id===b.id?b:x);
-    if(received>0)entries.unshift({id:Date.now(),date,client:b.client||'Consumidor Final',description:`Orçamento aprovado — ${b.client||'Cliente'}`,method,value:received,budgetId:b.id,source:'orcamento_aprovado'});
+    if(received>0)entries.unshift({id:Date.now(),date,client:b.client||'Consumidor Final',description:`Orçamento aprovado — ${b.client||'Cliente'}`,method,value:received,budgetId:b.id,source:'orcamento_aprovado',financeSync:true,financeId:crypto.randomUUID()});
     persistBudgetCash();closeApproval();showModule('history');toast(received>0?'Orçamento aprovado e entrada lançada no caixa.':'Orçamento aprovado. Nenhuma entrada financeira foi lançada.');
   }else{
-    let already=budgetReceived(b.id),balance=Math.max(0,(Number(b.total)||0)-already);if(received<=0)return toast('Informe o valor recebido.');if(received>balance+.009)return toast('O valor recebido não pode ser maior que o saldo em aberto.');entries.unshift({id:Date.now(),date,client:b.client||'Consumidor Final',description:`Recebimento do orçamento — ${b.client||'Cliente'}`,method,value:received,budgetId:b.id,source:'orcamento_recebimento'});persistBudgetCash();closeApproval();showModule('history');toast('Entrada lançada no caixa.');
+    let already=budgetReceived(b.id),balance=Math.max(0,(Number(b.total)||0)-already);if(received<=0)return toast('Informe o valor recebido.');if(received>balance+.009)return toast('O valor recebido não pode ser maior que o saldo em aberto.');entries.unshift({id:Date.now(),date,client:b.client||'Consumidor Final',description:`Recebimento do orçamento — ${b.client||'Cliente'}`,method,value:received,budgetId:b.id,source:'orcamento_recebimento',financeSync:true,financeId:crypto.randomUUID()});persistBudgetCash();closeApproval();showModule('history');toast('Entrada lançada no caixa.');
   }
 }
-function cancelApproval(id){let b=budgets.find(x=>x.id===id);if(!b)return;if(!confirm('Cancelar a aprovação? As entradas lançadas por este orçamento também serão removidas do caixa.'))return;entries=entries.filter(e=>String(e.budgetId||'')!==String(id));budgets=budgets.map(x=>x.id===id?{...x,status:'pendente',approvedAt:null,updatedAt:new Date().toISOString()}:x);persistBudgetCash();toast('Aprovação cancelada e lançamentos removidos do caixa.')}
+function cancelApproval(id){let b=budgets.find(x=>x.id===id);if(!b)return;if(!confirm('Cancelar a aprovação? As entradas lançadas por este orçamento também serão removidas do caixa.'))return;const canceled=entries.filter(e=>String(e.budgetId||'')===String(id)&&e.financeSync&&e.financeId).map(e=>({id:e.financeId}));financeCancellations=uniqueMerge(financeCancellations,canceled,x=>String(x.id));localStorage.setItem('rti_finance_cancellations',JSON.stringify(financeCancellations));entries=entries.filter(e=>String(e.budgetId||'')!==String(id));budgets=budgets.map(x=>x.id===id?{...x,status:'pendente',approvedAt:null,updatedAt:new Date().toISOString()}:x);persistBudgetCash();toast('Aprovação cancelada e lançamentos removidos do caixa.')}
 function renderSavedBudgets(){let q=(document.getElementById('budgetSearch')?.value||'').trim().toLowerCase();let list=budgets.filter(b=>{let d=new Date(b.date).toLocaleDateString('pt-BR'),st=(b.status||'pendente');return !q||[b.client,b.company,b.phone,d,st].some(v=>(v||'').toString().toLowerCase().includes(q))});let c=document.getElementById('savedCount');if(c)c.textContent=budgets.length+' salvo(s)';let historyEl=document.getElementById('history');if(!historyEl)return;historyEl.innerHTML=list.length?list.map(b=>{let approved=(b.status||'pendente')==='aprovado',received=budgetReceived(b.id),balance=Math.max(0,(Number(b.total)||0)-received);return `<div class="history-item"><div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><b>${escHtml(b.client)}</b><span style="padding:3px 8px;border-radius:999px;background:${approved?'#12361a':'#30290f'};color:${approved?'#7df079':'#ffd66b'};font-size:11px;font-weight:800">${approved?'✅ APROVADO':'⏳ PENDENTE'}</span></div><span>${new Date(b.date).toLocaleDateString('pt-BR')} • ${(b.items||[]).length} item(ns)${b.company?' • '+escHtml(b.company):''}</span>${approved?`<span style="display:block;margin-top:5px;color:#b9c7cf">Recebido: <b style="color:#65df61">${money(received)}</b> • Saldo: <b>${money(balance)}</b></span>`:''}</div><div style="text-align:right"><div class="price">${money(b.total)}</div><div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;margin-top:6px">${approved?`${balance>.009?`<button class="btn green" style="padding:7px 9px" onclick="openApproval(${b.id},'payment')">💰 Entrada</button>`:''}<button class="btn ghost" style="padding:7px 9px;color:#ffb16d" onclick="cancelApproval(${b.id})">Cancelar aprovação</button>`:`<button class="btn green" style="padding:7px 9px" onclick="openApproval(${b.id},'approve')">✅ Aprovar</button>`}<button class="btn primary" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'edit')">✏️ Editar</button><button class="btn ghost" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'print')">📄 PDF</button><button class="btn ghost" style="padding:7px 9px" onclick="openSavedBudget(${b.id},'whatsapp')">💬 Imagem WhatsApp</button>${approved?'':`<button class="btn ghost" style="padding:7px 9px;color:#ff8585" onclick="delBudget(${b.id})">Excluir</button>`}</div></div></div>`}).join(''):`<span style="color:var(--muted)">${budgets.length?'Nenhum orçamento encontrado na busca.':'Nenhum orçamento salvo ainda.'}</span>`}
 function escHtml(v){return String(v??'').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]))}
 function printBudget(){
